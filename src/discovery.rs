@@ -209,7 +209,12 @@ fn search_queries(search: &Search) -> Result<Vec<String>> {
     if make.chars().count() > 60 || model.chars().count() > 90 {
         bail!("La marque ou le modèle est trop long pour la recherche web.");
     }
-    let base = format!("\"{make}\" \"{model}\" occasion");
+    let energy = if search.filters.electric_only {
+        " électrique"
+    } else {
+        ""
+    };
+    let base = format!("\"{make}\" \"{model}\" occasion{energy}");
     let exclude = "-site:leboncoin.fr -site:lacentrale.fr -site:autoscout24.fr -site:paruvendu.fr -site:largus.fr";
     Ok(vec![
         format!("{base} garage France {exclude}"),
@@ -518,6 +523,7 @@ mod tests {
             make: "Renault".into(),
             model: "Clio".into(),
             max_price: 12000,
+            filters: Default::default(),
             enabled: true,
             created_at: 0,
         }

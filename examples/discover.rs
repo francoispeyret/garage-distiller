@@ -16,6 +16,7 @@ fn main() -> anyhow::Result<()> {
         make: args[0].clone(),
         model: args[1].clone(),
         max_price: args[2].parse()?,
+        filters: Default::default(),
         enabled: true,
         created_at: chrono::Utc::now().timestamp(),
     };

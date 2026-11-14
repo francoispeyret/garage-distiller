@@ -68,11 +68,13 @@ pub struct GarageApp {
     matching_only: bool,
     show_old: bool,
     price_sort: bool,
+    listing_filters: VehicleFilters,
     search_modal: bool,
     edit_id: Option<String>,
     form_make: String,
     form_model: String,
     form_budget: u32,
+    form_filters: VehicleFilters,
     detail: Option<String>,
     garage_url: String,
     screenshot: Option<PathBuf>,
@@ -140,11 +142,13 @@ impl GarageApp {
             matching_only: true,
             show_old: false,
             price_sort: false,
+            listing_filters: VehicleFilters::default(),
             search_modal: false,
             edit_id: None,
             form_make: String::new(),
             form_model: String::new(),
             form_budget: 15000,
+            form_filters: VehicleFilters::default(),
             detail: None,
             garage_url: String::new(),
             screenshot,
@@ -197,6 +201,7 @@ impl GarageApp {
         self.form_make.clear();
         self.form_model.clear();
         self.form_budget = 15000;
+        self.form_filters = VehicleFilters::default();
         self.search_modal = true;
     }
 
@@ -660,7 +665,7 @@ impl GarageApp {
 
     fn listing_table(&mut self, ui: &mut egui::Ui, compact: bool) {
         if !compact {
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.add(
                     egui::TextEdit::singleline(&mut self.query)
                         .hint_text("Filtrer par modèle ou garage…")
@@ -671,10 +676,10 @@ impl GarageApp {
                 ui.checkbox(&mut self.favorites_only, "Favoris");
                 ui.checkbox(&mut self.show_old, "Archives")
                     .on_hover_text("Inclure les annonces non revues depuis plus de 48 heures");
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.checkbox(&mut self.price_sort, "Prix croissant");
-                });
+                ui.checkbox(&mut self.price_sort, "Prix croissant");
             });
+            ui.add_space(8.0);
+            vehicle_filters(ui, &mut self.listing_filters);
             ui.add_space(16.0);
         }
         let query = normalize(&self.query);
@@ -684,6 +689,7 @@ impl GarageApp {
             .iter()
             .filter(|l| {
                 (!self.favorites_only || l.favorite)
+                    && self.listing_filters.matches(l)
                     && (self.show_old
                         || self.favorites_only
                         || l.last_seen >= chrono::Utc::now().timestamp() - 172_800)
@@ -916,6 +922,10 @@ impl GarageApp {
                             ))
                             .color(MUTED),
                         );
+                        let criteria = search.filters.description();
+                        if !criteria.is_empty() {
+                            ui.label(RichText::new(criteria).color(ACCENT).size(12.0));
+                        }
                     });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if secondary(ui, "Supprimer").clicked() {
@@ -941,6 +951,7 @@ impl GarageApp {
             self.form_make = search.make;
             self.form_model = search.model;
             self.form_budget = search.max_price;
+            self.form_filters = search.filters;
             self.edit_id = Some(search.id);
             self.search_modal = true;
         }
@@ -1193,8 +1204,10 @@ impl GarageApp {
             ui.label("Marque"); ui.add(egui::TextEdit::singleline(&mut self.form_make).margin(Margin::symmetric(12,10)).hint_text("Renault, Peugeot, BMW…").desired_width(f32::INFINITY)); ui.add_space(12.0);
             ui.label("Modèle"); ui.add(egui::TextEdit::singleline(&mut self.form_model).margin(Margin::symmetric(12,10)).hint_text("Clio, 208, Série 3…").desired_width(f32::INFINITY)); ui.add_space(12.0);
             ui.label("Budget maximum"); ui.add(egui::DragValue::new(&mut self.form_budget).range(500..=2_000_000).speed(100).suffix(" €")); ui.add_space(16.0);
+            vehicle_filters(ui, &mut self.form_filters);
+            ui.add_space(12.0);
             ui.label(RichText::new("Recherche en France, sur les sites de professionnels. Le modèle et la marque doivent figurer dans le titre de l’annonce.").color(MUTED).size(12.0)); ui.add_space(20.0);
-            let valid = !normalize(&self.form_make).is_empty() && !normalize(&self.form_model).is_empty() && self.form_budget>0;
+            let valid = !normalize(&self.form_make).is_empty() && !normalize(&self.form_model).is_empty() && self.form_budget>0 && self.form_filters.valid();
             ui.add_enabled_ui(valid, |ui| { if primary(ui,"Enregistrer et explorer").clicked() {submit=true;} }); ui.add_space(10.0);
         });
         if !opened {
@@ -1206,6 +1219,7 @@ impl GarageApp {
                     search.make = self.form_make.trim().into();
                     search.model = self.form_model.trim().into();
                     search.max_price = self.form_budget;
+                    search.filters = self.form_filters.clone();
                     search.enabled = true;
                 }
             } else {
@@ -1214,6 +1228,7 @@ impl GarageApp {
                     make: self.form_make.trim().into(),
                     model: self.form_model.trim().into(),
                     max_price: self.form_budget,
+                    filters: self.form_filters.clone(),
                     enabled: true,
                     created_at: chrono::Utc::now().timestamp(),
                 });
@@ -1393,6 +1408,54 @@ fn card() -> Frame {
         .inner_margin(18)
 }
 
+fn vehicle_filters(ui: &mut egui::Ui, filters: &mut VehicleFilters) {
+    ui.horizontal_wrapped(|ui| {
+        ui.checkbox(&mut filters.electric_only, "Électrique uniquement")
+            .on_hover_text("Véhicules 100 % électriques ; hybrides exclus.");
+        if *filters != VehicleFilters::default() && ui.small_button("Réinitialiser").clicked() {
+            *filters = VehicleFilters::default();
+        }
+    });
+    let this_year = chrono::Datelike::year(&chrono::Utc::now()) as u16;
+    ui.horizontal_wrapped(|ui| {
+        year_filter(ui, "Année min.", &mut filters.min_year, 2018, this_year + 1);
+        year_filter(
+            ui,
+            "Année max.",
+            &mut filters.max_year,
+            this_year,
+            this_year + 1,
+        );
+    });
+    if !filters.valid() {
+        ui.label(
+            RichText::new("L’année minimum doit précéder ou égaler l’année maximum.")
+                .color(AMBER)
+                .size(12.0),
+        );
+    } else if *filters != VehicleFilters::default() {
+        ui.label(
+            RichText::new("Les annonces sans l’énergie ou l’année demandée sont exclues.")
+                .color(MUTED)
+                .size(11.0),
+        );
+    }
+}
+
+fn year_filter(ui: &mut egui::Ui, label: &str, year: &mut Option<u16>, default: u16, max: u16) {
+    ui.horizontal(|ui| {
+        let mut enabled = year.is_some();
+        ui.checkbox(&mut enabled, label)
+            .on_hover_text("Borne incluse. Désactiver pour ne pas limiter l’année.");
+        let mut value = year.unwrap_or(default);
+        ui.add_enabled(
+            enabled,
+            egui::DragValue::new(&mut value).range(1900..=max).speed(1),
+        );
+        *year = enabled.then_some(value);
+    });
+}
+
 fn nav_button(ui: &mut egui::Ui, label: &str, page: Page, selected: bool) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::new(187.0, 44.0), egui::Sense::click());
     response
@@ -1519,6 +1582,7 @@ fn demo_state() -> State {
                 make: "Renault".into(),
                 model: "Clio".into(),
                 max_price: 15000,
+                filters: Default::default(),
                 enabled: true,
                 created_at: now,
             },
@@ -1527,6 +1591,7 @@ fn demo_state() -> State {
                 make: "Peugeot".into(),
                 model: "208".into(),
                 max_price: 16000,
+                filters: Default::default(),
                 enabled: true,
                 created_at: now,
             },
@@ -1535,6 +1600,7 @@ fn demo_state() -> State {
                 make: "Volkswagen".into(),
                 model: "Golf".into(),
                 max_price: 18000,
+                filters: Default::default(),
                 enabled: true,
                 created_at: now,
             },
@@ -1552,12 +1618,12 @@ fn demo_state() -> State {
             "Essence",
         ),
         (
-            "Peugeot 208 Allure PureTech 100",
+            "Peugeot 208 e-208 Allure 136 ch",
             "Automobiles du Parc",
             14490,
             27800,
             2022,
-            "Essence",
+            "Électrique",
         ),
         (
             "Volkswagen Golf VII 1.4 TSI",

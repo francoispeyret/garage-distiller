@@ -25,6 +25,10 @@ cargo run --release
 3. Consultez les annonces correspondantes, filtrez le tableau et ajoutez vos favoris. Ouvrez une annonce pour consulter ses détails et son site d’origine.
 4. Dans **Réglages**, choisissez l’intervalle de surveillance et activez les notifications. Autorisez aussi les notifications dans macOS ou Windows. Dans la version portable Windows, elles peuvent apparaître sous le nom Windows PowerShell, utilisé par le service de notifications.
 
+Dans **Les annonces**, les filtres **Électrique uniquement**, **Année min.** et **Année max.** se combinent avec le budget et les favoris. Les années sont inclusives : choisissez la même année aux deux bornes pour une année précise. Les hybrides sont exclus du filtre électrique ; les annonces sans l’énergie ou l’année demandée ne sont pas retenues.
+
+Ces critères sont aussi disponibles à la création ou à la modification d’une recherche et s’appliquent aux notifications. Les recherches enregistrées avant la version 0.1.1 restent utilisables sans nouveaux critères imposés.
+
 Les recherches sont modifiables, désactivables et supprimables. Un garage découvert peut être désactivé. L’ajout manuel d’un site et les sélecteurs CSS restent disponibles en complément pour les sites dont la structure nécessite une adaptation.
 
 La surveillance s’effectue **tant que l’application est ouverte**. Elle n’installe aucun service système. Par défaut, les explorations sont espacées de 60 minutes ; l’intervalle est réglable de 15 minutes à 24 heures.
