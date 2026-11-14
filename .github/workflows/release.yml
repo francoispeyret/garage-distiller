@@ -3,13 +3,22 @@ name: Signed desktop release
 on:
   push:
     tags: ["v[0-9]*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing immutable release tag, e.g. v0.1.0"
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   build:
@@ -32,6 +41,9 @@ jobs:
       MACOSX_DEPLOYMENT_TARGET: "12.0"
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Manual recovery builds the existing tag, never the moving main branch.
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -42,7 +54,7 @@ jobs:
           import os, pathlib, re, tomllib
           version = tomllib.loads(pathlib.Path('Cargo.toml').read_text())['package']['version']
           assert re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version), 'Only stable versions are released'
-          assert os.environ['GITHUB_REF_NAME'] == f'v{version}', 'Tag must match Cargo.toml'
+          assert os.environ['RELEASE_TAG'] == f'v{version}', 'Tag must match Cargo.toml'
           key = os.environ['GARAGE_DISTILLER_UPDATE_PUBLIC_KEY_HEX']
           assert re.fullmatch(r'[0-9a-fA-F]{64}', key) and int(key, 16), 'Configure the public update key repository variable'
           with open(os.environ['GITHUB_ENV'], 'a') as f:
@@ -113,7 +125,6 @@ jobs:
       - name: Publish all platforms atomically through a draft release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
           GH_REPO: ${{ github.repository }}
         run: |
           gh release create "$RELEASE_TAG" --verify-tag --draft --title "Garage Distiller $RELEASE_TAG" --generate-notes dist/*.zip dist/SHA256SUMS

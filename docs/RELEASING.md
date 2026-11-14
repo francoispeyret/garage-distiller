@@ -43,6 +43,14 @@ La clé publique est intégrée au binaire à la compilation. Une compilation lo
 
 Les noms d'archives font partie du protocole : `garage-distiller-vVERSION-TARGET.zip`. Ne pas renommer une archive après signature : son nom est également authentifié. En cas d'échec de publication laissant une release en brouillon, inspecter/supprimer ce brouillon avant de relancer le job. Ne pas remplacer les fichiers d'une release déjà distribuée ; publier une nouvelle version.
 
+Si le push du tag ne déclenche aucun workflow, lancer `Signed desktop release` manuellement depuis Actions avec le champ `tag` (par exemple `v0.1.0`), ou utiliser :
+
+```sh
+gh workflow run release.yml --repo francoispeyret/garage-distiller --ref main --field tag=v0.1.0
+```
+
+Cette reprise charge la définition actuelle du workflow, puis extrait et construit **le tag existant**. Le tag choisi doit correspondre à la version de son `Cargo.toml`, et la publication utilise ce même tag. Aucun tag n'est supprimé ni déplacé. C'est aussi la voie de reprise si le premier push simultané de `main` et du tag n'a déclenché que l'intégration continue.
+
 ## Installation et signature système
 
 - **macOS** : décompresser, déplacer `Garage Distiller.app` dans un dossier accessible en écriture (par exemple `~/Applications`), puis ouvrir l'application. Une mise à jour remplace le bundle entier, y compris ses ressources et sa signature. Le workflow produit une signature ad hoc, pas une signature Developer ID ni une notarisation Apple. Pour une distribution sans avertissement Gatekeeper, ajouter la signature Developer ID et la notarisation avant de signer l'archive de mise à jour. L'application ne contourne pas Gatekeeper ni la translocation macOS.
