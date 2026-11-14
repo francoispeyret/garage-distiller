@@ -1,0 +1,12 @@
+/target/
+/.tools/
+/.build/
+/dist/
+*.pem
+*.key
+.DS_Store
+.env
+
+
+__pycache__/
+*.pyc
