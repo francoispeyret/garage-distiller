@@ -1,10 +1,10 @@
-use eframe::egui::{self, Align, Color32, FontId, Frame, Layout, Margin, RichText, Stroke, Vec2};
-use egui_extras::{Column, TableBuilder};
-use garage_distiller::{
+use crate::{
     engine::{self, Event},
     model::*,
     storage, updater,
 };
+use eframe::egui::{self, Align, Color32, FontId, Frame, Layout, Margin, RichText, Stroke, Vec2};
+use egui_extras::{Column, TableBuilder};
 use std::{
     path::PathBuf,
     sync::{
@@ -206,7 +206,7 @@ impl GarageApp {
     }
 
     fn start_scan(&mut self) {
-        if self.scanning {
+        if self.scanning || !foreground() {
             return;
         }
         if self.demo {
@@ -222,6 +222,8 @@ impl GarageApp {
         self.warnings.clear();
         self.progress = "Préparation de la recherche…".into();
         self.cancel = Arc::new(AtomicBool::new(false));
+        #[cfg(target_os = "android")]
+        crate::android::register_scan(self.cancel.clone());
         let cancel = self.cancel.clone();
         let searches = self.state.searches.clone();
         let garages = self.state.garages.clone();
@@ -233,7 +235,7 @@ impl GarageApp {
     }
 
     fn check_update(&mut self) {
-        if self.demo || self.update_rx.is_some() || self.updated {
+        if cfg!(target_os = "android") || self.demo || self.update_rx.is_some() || self.updated {
             return;
         }
         self.next_update = Instant::now() + Duration::from_secs(24 * 3600);
@@ -417,13 +419,14 @@ impl GarageApp {
         }
         if !self.demo && !self.read_only {
             if self.state.settings.auto_scan
+                && foreground()
                 && !self.scanning
                 && Instant::now() >= self.next_scan
                 && self.state.searches.iter().any(|s| s.enabled)
             {
                 self.start_scan();
             }
-            if Instant::now() >= self.next_update {
+            if !cfg!(target_os = "android") && Instant::now() >= self.next_update {
                 self.check_update();
             }
         }
@@ -447,17 +450,43 @@ impl GarageApp {
         }
         let tx = self.notification_tx.clone();
         std::thread::spawn(move || {
-            if let Err(error) = notify_rust::Notification::new()
+            #[cfg(target_os = "android")]
+            let result = crate::android::notify(&body);
+            #[cfg(not(target_os = "android"))]
+            let result = notify_rust::Notification::new()
                 .summary("Garage Distiller · Bonne affaire repérée")
                 .body(&body)
-                .show()
-            {
+                .show();
+            if let Err(error) = result {
                 let _=tx.send(format!("Notification système indisponible : {error}. Les détections restent visibles dans l’application."));
             }
         });
     }
 
     fn sidebar(&mut self, ctx: &egui::Context) {
+        if ctx.content_rect().width() < 700.0 {
+            egui::TopBottomPanel::top("mobile_navigation").show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("garage distiller").strong().color(ACCENT));
+                    egui::ComboBox::from_id_salt("mobile_page")
+                        .height(360.0)
+                        .selected_text(page_title(self.page))
+                        .show_ui(ui, |ui| {
+                            for page in [
+                                Page::Overview,
+                                Page::Listings,
+                                Page::Searches,
+                                Page::Garages,
+                                Page::Alerts,
+                                Page::Settings,
+                            ] {
+                                ui.selectable_value(&mut self.page, page, page_title(page));
+                            }
+                        });
+                });
+            });
+            return;
+        }
         egui::SidePanel::left("navigation")
             .exact_width(224.0)
             .resizable(false)
@@ -570,6 +599,15 @@ impl GarageApp {
     }
 
     fn header(&mut self, ui: &mut egui::Ui, title: &str, subtitle: &str) {
+        if ui.available_width() < 700.0 {
+            ui.heading(RichText::new(title).size(24.0));
+            ui.label(RichText::new(subtitle).color(MUTED));
+            if primary(ui, "+ Nouvelle recherche").clicked() {
+                self.new_search();
+            }
+            ui.add_space(12.0);
+            return;
+        }
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
                 ui.heading(RichText::new(title).size(29.0).strong());
@@ -586,6 +624,35 @@ impl GarageApp {
     }
 
     fn overview(&mut self, ui: &mut egui::Ui) {
+        if ui.available_width() < 700.0 {
+            self.header(
+                ui,
+                "Votre prochaine voiture.",
+                "Les annonces des garages, directement à la source.",
+            );
+            if self.scanning {
+                if secondary(ui, "Arrêter l’exploration").clicked() {
+                    self.cancel.store(true, Ordering::Relaxed);
+                }
+            } else if primary(ui, "Explorer maintenant").clicked() {
+                self.start_scan();
+            }
+            ui.label(
+                RichText::new(format!(
+                    "{} recherches · {} sources · {} détections",
+                    self.state.searches.len(),
+                    self.state.garages.len(),
+                    self.state.alerts.iter().filter(|a| !a.read).count()
+                ))
+                .color(MUTED),
+            );
+            ui.add_space(12.0);
+            if ui.link("Toutes les annonces").clicked() {
+                self.page = Page::Listings;
+            }
+            self.listing_table(ui, true);
+            return;
+        }
         self.header(
             ui,
             "Une longueur d’avance.",
@@ -666,10 +733,12 @@ impl GarageApp {
     fn listing_table(&mut self, ui: &mut egui::Ui, compact: bool) {
         if !compact {
             ui.horizontal_wrapped(|ui| {
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.query)
-                        .hint_text("Filtrer par modèle ou garage…")
-                        .desired_width(270.0),
+                text_field(
+                    ui,
+                    &mut self.query,
+                    "Filtrer par modèle ou garage…",
+                    false,
+                    270.0,
                 );
                 ui.add_space(12.0);
                 ui.checkbox(&mut self.matching_only, "Dans mon budget");
@@ -748,6 +817,70 @@ impl GarageApp {
                 });
                 ui.add_space(36.0);
             });
+            return;
+        }
+        if ui.available_width() < 700.0 {
+            for listing in listings {
+                card().show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(RichText::new(&listing.title).strong().size(18.0));
+                    ui.label(
+                        RichText::new(format!("{} €", number(listing.price)))
+                            .color(ACCENT)
+                            .size(22.0),
+                    );
+                    ui.label(&listing.garage_name);
+                    ui.label(
+                        RichText::new(format!(
+                            "{} · {} · {}",
+                            listing
+                                .year
+                                .map(|v| v.to_string())
+                                .unwrap_or_else(|| "Année inconnue".into()),
+                            listing
+                                .mileage
+                                .map(|v| format!("{} km", number(v)))
+                                .unwrap_or_else(|| "Km inconnus".into()),
+                            listing.fuel.as_deref().unwrap_or("Énergie inconnue")
+                        ))
+                        .color(MUTED),
+                    );
+                    ui.label(
+                        RichText::new(format!(
+                            "Dernière observation {}",
+                            relative(listing.last_seen)
+                        ))
+                        .color(MUTED)
+                        .size(11.0),
+                    );
+                    ui.horizontal_wrapped(|ui| {
+                        if secondary(ui, "Voir l’annonce").clicked() {
+                            self.detail = Some(listing.id.clone());
+                        }
+                        if secondary(
+                            ui,
+                            if listing.favorite {
+                                "★ Favori"
+                            } else {
+                                "☆ Favori"
+                            },
+                        )
+                        .clicked()
+                        {
+                            if let Some(saved) = self
+                                .state
+                                .listings
+                                .iter_mut()
+                                .find(|saved| saved.id == listing.id)
+                            {
+                                saved.favorite = !saved.favorite;
+                            }
+                            self.save();
+                        }
+                    });
+                });
+                ui.add_space(10.0);
+            }
             return;
         }
         let mut favorite = None;
@@ -912,7 +1045,7 @@ impl GarageApp {
         for search in &mut self.state.searches {
             card().show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.horizontal(|ui| {
+                responsive_row(ui, |ui| {
                     ui.vertical(|ui| {
                         ui.label(RichText::new(search.label()).strong().size(19.0));
                         ui.label(
@@ -927,7 +1060,7 @@ impl GarageApp {
                             ui.label(RichText::new(criteria).color(ACCENT).size(12.0));
                         }
                     });
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    responsive_actions(ui, |ui| {
                         if secondary(ui, "Supprimer").clicked() {
                             remove = Some(search.id.clone());
                         }
@@ -967,11 +1100,13 @@ impl GarageApp {
             "Les pages découvertes automatiquement, et le résultat de leur dernière lecture.",
         );
         ui.collapsing("Ajouter un site en complément", |ui| {
-            ui.horizontal(|ui| {
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.garage_url)
-                        .desired_width(400.0)
-                        .hint_text("https://www.garage.fr/voitures-occasion"),
+            responsive_row(ui, |ui| {
+                text_field(
+                    ui,
+                    &mut self.garage_url,
+                    "https://www.garage.fr/voitures-occasion",
+                    false,
+                    400.0,
                 );
                 if secondary(ui, "Ajouter").clicked() {
                     match url::Url::parse(self.garage_url.trim()) {
@@ -1023,9 +1158,9 @@ impl GarageApp {
         for garage in &mut self.state.garages {
             card().show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.horizontal(|ui| {
+                responsive_row(ui, |ui| {
                     ui.label(RichText::new(&garage.name).strong());
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    responsive_actions(ui, |ui| {
                         dirty |= ui.checkbox(&mut garage.enabled, "Surveiller").changed();
                     });
                 });
@@ -1068,7 +1203,7 @@ impl GarageApp {
                                 ("Année", &mut garage.selectors.year),
                             ] {
                                 ui.label(label);
-                                dirty |= ui.text_edit_singleline(value).changed();
+                                dirty |= text_field(ui, value, "", false, 220.0).changed();
                                 ui.end_row();
                             }
                         });
@@ -1106,7 +1241,7 @@ impl GarageApp {
         for alert in self.state.alerts.iter().rev() {
             card().show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.horizontal(|ui| {
+                responsive_row(ui, |ui| {
                     ui.vertical(|ui| {
                         ui.label(
                             RichText::new(format!(
@@ -1128,7 +1263,7 @@ impl GarageApp {
                                 .size(10.0),
                         );
                     });
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    responsive_actions(ui, |ui| {
                         if secondary(ui, "Voir l’annonce  ↗").clicked() {
                             selected = Some((alert.id.clone(), alert.listing_id.clone()));
                         }
@@ -1155,9 +1290,9 @@ impl GarageApp {
         card().show(ui, |ui| {
             ui.set_width(ui.available_width()); ui.label(RichText::new("Exploration & notifications").size(18.0).strong()); ui.add_space(15.0);
             dirty |= ui.checkbox(&mut self.state.settings.auto_scan,"Explorer automatiquement tant que l’application est ouverte").changed();
-            ui.horizontal(|ui| {ui.label("Intervalle entre deux explorations"); dirty |= ui.add(egui::DragValue::new(&mut self.state.settings.scan_minutes).range(15..=1440).suffix(" min")).changed();});
+            ui.horizontal_wrapped(|ui| {ui.label("Intervalle entre deux explorations (min)"); dirty |= number_field(ui, &mut self.state.settings.scan_minutes, 15..=1440, " min").changed();});
             dirty |= ui.checkbox(&mut self.state.settings.notifications,"Recevoir les notifications du système").changed();
-            ui.label(RichText::new(if cfg!(target_os="windows") {"Cette version portable utilise le service Windows PowerShell pour les notifications. Autorisez-les dans les réglages Windows."} else {"Autorisez les notifications de Garage Distiller dans les réglages de macOS."}).color(MUTED).size(11.0));
+            ui.label(RichText::new(if cfg!(target_os="android") {"Utilisez Tester les notifications pour autoriser Android à afficher les alertes. La veille fonctionne au premier plan uniquement."} else if cfg!(target_os="windows") {"Cette version portable utilise le service Windows PowerShell pour les notifications. Autorisez-les dans les réglages Windows."} else {"Autorisez les notifications de Garage Distiller dans les réglages de macOS."}).color(MUTED).size(11.0));
             if secondary(ui,"Tester les notifications").clicked() {self.notify("Votre veille est prête. Les nouvelles offres seront signalées ici.".into());}
             ui.add_space(14.0);
             ui.label(RichText::new("Découverte web").strong());
@@ -1165,7 +1300,7 @@ impl GarageApp {
             ui.label(if api {"API Brave Search configurée"} else {"Recherche web publique · aucune clé nécessaire"});
             ui.label(RichText::new("Les moteurs peuvent limiter les requêtes. Une API Brave Search peut être configurée au lancement pour fiabiliser la découverte.").color(MUTED).size(12.0));
             ui.add_space(8.0);
-            ui.add(egui::TextEdit::singleline(&mut self.brave_api_key).password(true).hint_text("Clé API Brave Search · facultative").desired_width(400.0));
+            text_field(ui, &mut self.brave_api_key, "Clé API Brave Search · facultative", true, 400.0);
             ui.label(RichText::new("Clé gardée uniquement en mémoire pour cette session.").color(MUTED).size(11.0));
             ui.hyperlink_to("Configurer une clé Brave Search  ↗","https://api-dashboard.search.brave.com/");
         });
@@ -1173,6 +1308,7 @@ impl GarageApp {
         card().show(ui, |ui| {
             ui.set_width(ui.available_width()); ui.label(RichText::new("Mises à jour GitHub").size(18.0).strong()); ui.add_space(12.0);
             ui.label(format!("Version installée : {}",env!("CARGO_PKG_VERSION")));
+            if !cfg!(target_os = "android") {
             dirty |= ui.checkbox(&mut self.state.settings.auto_update,"Installer automatiquement les mises à jour signées").changed();
             ui.label(RichText::new(&self.update_status).color(if self.updated {ACCENT} else {MUTED}));
             if !updater::configured() { ui.label(RichText::new("Cette compilation de développement n’intègre pas encore de clé de mise à jour. Les versions distribuées par GitHub utilisent une signature vérifiée.").size(12.0).color(AMBER)); }
@@ -1182,10 +1318,13 @@ impl GarageApp {
                 if self.release.is_some() && !self.updated && ui.add_enabled(updater::configured() && self.update_rx.is_none(),egui::Button::new("Installer la mise à jour").min_size(Vec2::new(180.0,38.0))).clicked() { self.install_update(); }
             });
             if let Some(release)=&self.release {ui.collapsing("Notes de version",|ui|{ui.label(&release.notes);});}
+            } else {
+                ui.label("Pour mettre à jour, installez un nouvel APK signé avec la même clé. Android conserve vos données lors de la mise à jour.");
+            }
             ui.hyperlink_to("Ouvrir les versions sur GitHub  ↗",updater::RELEASES_URL);
         });
         ui.add_space(16.0);
-        card().show(ui, |ui| { ui.set_width(ui.available_width()); ui.label(RichText::new("Vos données restent sur cet ordinateur").strong()); ui.add_space(8.0); ui.label(RichText::new("Recherches, favoris, annonces et historique sont enregistrés localement. Les termes recherchés sont envoyés au moteur de recherche ; les sites des garages sont consultés directement.").color(MUTED)); if let Some(path)=&self.path { ui.add_space(8.0); if secondary(ui,"Ouvrir le dossier de données").clicked() && let Some(parent)=path.parent() { let _=open::that(parent); } } });
+        card().show(ui, |ui| { ui.set_width(ui.available_width()); ui.label(RichText::new("Vos données restent sur cet appareil").strong()); ui.add_space(8.0); ui.label(RichText::new("Recherches, favoris, annonces et historique sont enregistrés localement. Les termes recherchés sont envoyés au moteur de recherche ; les sites des garages sont consultés directement.").color(MUTED)); #[cfg(not(target_os = "android"))] if let Some(path)=&self.path { ui.add_space(8.0); if secondary(ui,"Ouvrir le dossier de données").clicked() && let Some(parent)=path.parent() { let _=open::that(parent); } } });
         if dirty {
             self.next_scan =
                 Instant::now() + Duration::from_secs(self.state.settings.scan_minutes as u64 * 60);
@@ -1199,11 +1338,11 @@ impl GarageApp {
         }
         let mut opened = true;
         let mut submit = false;
-        egui::Window::new(if self.edit_id.is_some() {"Modifier la recherche"} else {"Votre prochaine voiture"}).open(&mut opened).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER,Vec2::ZERO).default_width(440.0).show(ctx, |ui| {
+        egui::Window::new(if self.edit_id.is_some() {"Modifier la recherche"} else {"Votre prochaine voiture"}).open(&mut opened).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER,Vec2::ZERO).default_width((ctx.content_rect().width() - 32.0).min(440.0)).max_width((ctx.content_rect().width() - 32.0).min(440.0)).max_height(ctx.content_rect().height() - 70.0).vscroll(true).show(ctx, |ui| {
             ui.add_space(10.0); ui.label(RichText::new("Nous trouvons les garages. Vous fixez les critères.").color(MUTED)); ui.add_space(20.0);
-            ui.label("Marque"); ui.add(egui::TextEdit::singleline(&mut self.form_make).margin(Margin::symmetric(12,10)).hint_text("Renault, Peugeot, BMW…").desired_width(f32::INFINITY)); ui.add_space(12.0);
-            ui.label("Modèle"); ui.add(egui::TextEdit::singleline(&mut self.form_model).margin(Margin::symmetric(12,10)).hint_text("Clio, 208, Série 3…").desired_width(f32::INFINITY)); ui.add_space(12.0);
-            ui.label("Budget maximum"); ui.add(egui::DragValue::new(&mut self.form_budget).range(500..=2_000_000).speed(100).suffix(" €")); ui.add_space(16.0);
+            ui.label("Marque"); text_field(ui, &mut self.form_make, "Renault, Peugeot, BMW…", false, f32::INFINITY); ui.add_space(12.0);
+            ui.label("Modèle"); text_field(ui, &mut self.form_model, "Clio, 208, Série 3…", false, f32::INFINITY); ui.add_space(12.0);
+            ui.label("Budget maximum (€)"); number_field(ui, &mut self.form_budget, 500..=2_000_000, " €"); ui.add_space(16.0);
             vehicle_filters(ui, &mut self.form_filters);
             ui.add_space(12.0);
             ui.label(RichText::new("Recherche en France, sur les sites de professionnels. Le modèle et la marque doivent figurer dans le titre de l’annonce.").color(MUTED).size(12.0)); ui.add_space(20.0);
@@ -1258,7 +1397,7 @@ impl GarageApp {
             return;
         };
         let mut open = true;
-        egui::Window::new("Détail de l’annonce").open(&mut open).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER,Vec2::ZERO).default_width(510.0).show(ctx, |ui| {
+        egui::Window::new("Détail de l’annonce").open(&mut open).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER,Vec2::ZERO).default_width((ctx.content_rect().width() - 32.0).min(510.0)).max_width((ctx.content_rect().width() - 32.0).min(510.0)).max_height(ctx.content_rect().height() - 70.0).vscroll(true).show(ctx, |ui| {
             ui.add_space(12.0); ui.label(RichText::new(&listing.title).strong().size(24.0)); ui.add_space(12.0); ui.label(RichText::new(format!("{} €",number(listing.price))).size(32.0).strong().color(ACCENT)); ui.add_space(16.0);
             ui.label(format!("Garage : {}", listing.garage_name));
             if let Some(year)=listing.year {ui.label(format!("Année : {year}"));}
@@ -1269,7 +1408,7 @@ impl GarageApp {
             if primary(ui,"Voir sur le site du garage  ↗").clicked()
                 && let Ok(url)=url::Url::parse(&listing.url)
                 && ["https","http"].contains(&url.scheme())
-                && let Err(e)=open::that(url.as_str()) {
+                && let Err(e)=webbrowser::open(url.as_str()) {
                 self.message(format!("Ouverture du navigateur impossible : {e}"));
             }
             ui.add_space(8.0);
@@ -1281,7 +1420,16 @@ impl GarageApp {
 }
 
 impl eframe::App for GarageApp {
+    #[cfg(target_os = "android")]
+    fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
+        crate::android::resize_for_keyboard(ctx, input);
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        #[cfg(target_os = "android")]
+        if !foreground() && self.scanning {
+            self.cancel.store(true, Ordering::Relaxed);
+        }
         self.poll(ctx);
         if self.installing && ctx.input(|i| i.viewport().close_requested()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
@@ -1295,7 +1443,7 @@ impl eframe::App for GarageApp {
                     .inner_margin(Margin::symmetric(26, 10)),
             )
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     if self.scanning {
                         ui.spinner();
                         ui.label(RichText::new(&self.progress).color(MUTED).size(11.0));
@@ -1318,21 +1466,23 @@ impl eframe::App for GarageApp {
                             .color(MUTED),
                         );
                     }
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(
-                            RichText::new(if self.demo {
-                                "DÉMONSTRATION · DONNÉES FICTIVES"
-                            } else {
-                                "FRANCE  /  EUR  /  DIRECT GARAGES"
-                            })
-                            .size(9.0)
-                            .color(if self.demo { AMBER } else { MUTED })
-                            .extra_letter_spacing(1.0),
-                        );
-                    });
+                    if ctx.content_rect().width() >= 700.0 {
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(if self.demo {
+                                    "DÉMONSTRATION · DONNÉES FICTIVES"
+                                } else {
+                                    "FRANCE  /  EUR  /  DIRECT GARAGES"
+                                })
+                                .size(9.0)
+                                .color(if self.demo { AMBER } else { MUTED })
+                                .extra_letter_spacing(1.0),
+                            );
+                        });
+                    }
                 });
             });
-        egui::CentralPanel::default().frame(Frame::new().fill(BG).inner_margin(Margin::symmetric(30,28))).show(ctx, |ui| {
+        egui::CentralPanel::default().frame(Frame::new().fill(BG).inner_margin(if ctx.content_rect().width() < 700.0 { Margin::same(12) } else { Margin::symmetric(30,28) })).show(ctx, |ui| {
             if let Some(error)=&self.storage_error {ui.label(RichText::new(error).color(AMBER));ui.add_space(10.0);}
             if let Some((message,_))=&self.toast {Frame::new().fill(Color32::from_rgb(37,47,36)).corner_radius(8).inner_margin(12).show(ui,|ui|{ui.set_width(ui.available_width());ui.label(RichText::new(message).color(ACCENT));});ui.add_space(12.0);}
             egui::ScrollArea::vertical().auto_shrink([false,false]).show(ui, |ui| {
@@ -1391,7 +1541,14 @@ fn setup_style(ctx: &egui::Context) {
     style.visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, ACCENT);
     style.spacing.item_spacing = Vec2::new(10.0, 8.0);
     style.spacing.button_padding = Vec2::new(16.0, 10.0);
-    style.spacing.interact_size = Vec2::new(40.0, 34.0);
+    style.spacing.interact_size = Vec2::new(
+        44.0,
+        if cfg!(target_os = "android") {
+            48.0
+        } else {
+            34.0
+        },
+    );
     style
         .text_styles
         .insert(egui::TextStyle::Body, FontId::proportional(14.0));
@@ -1447,12 +1604,11 @@ fn year_filter(ui: &mut egui::Ui, label: &str, year: &mut Option<u16>, default: 
         let mut enabled = year.is_some();
         ui.checkbox(&mut enabled, label)
             .on_hover_text("Borne incluse. Désactiver pour ne pas limiter l’année.");
-        let mut value = year.unwrap_or(default);
-        ui.add_enabled(
-            enabled,
-            egui::DragValue::new(&mut value).range(1900..=max).speed(1),
-        );
-        *year = enabled.then_some(value);
+        let mut value = u32::from(year.unwrap_or(default));
+        ui.add_enabled_ui(enabled, |ui| {
+            number_field(ui, &mut value, 1900..=u32::from(max), "");
+        });
+        *year = enabled.then_some(value as u16);
     });
 }
 
@@ -1679,4 +1835,103 @@ fn demo_state() -> State {
         }]);
     }
     state
+}
+
+fn foreground() -> bool {
+    #[cfg(target_os = "android")]
+    {
+        crate::android::is_resumed()
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        true
+    }
+}
+
+fn page_title(page: Page) -> &'static str {
+    match page {
+        Page::Overview => "Accueil",
+        Page::Listings => "Annonces",
+        Page::Searches => "Recherches",
+        Page::Garages => "Garages",
+        Page::Alerts => "Détections",
+        Page::Settings => "Réglages",
+    }
+}
+
+fn responsive_row(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) {
+    let layout = if ui.available_width() < 700.0 {
+        Layout::top_down(Align::LEFT)
+    } else {
+        Layout::left_to_right(Align::Center)
+    };
+    ui.with_layout(layout, content);
+}
+
+fn responsive_actions(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) {
+    if ui.available_width() < 700.0 {
+        ui.horizontal_wrapped(content);
+    } else {
+        ui.with_layout(Layout::right_to_left(Align::Center), content);
+    }
+}
+
+fn text_field(
+    ui: &mut egui::Ui,
+    text: &mut String,
+    hint: &str,
+    password: bool,
+    width: f32,
+) -> egui::Response {
+    text_field_kind(ui, text, hint, password, width, false)
+}
+
+fn text_field_kind(
+    ui: &mut egui::Ui,
+    text: &mut String,
+    hint: &str,
+    password: bool,
+    width: f32,
+    _numeric: bool,
+) -> egui::Response {
+    #[allow(unused_mut)]
+    let mut output = egui::TextEdit::singleline(text)
+        .hint_text(hint)
+        .password(password)
+        .desired_width(ui.available_width().min(width))
+        .margin(Margin::symmetric(10, 10))
+        .show(ui);
+    #[cfg(target_os = "android")]
+    crate::android::sync_text(ui, text, &mut output, password, _numeric);
+    output.response
+}
+
+fn number_field(
+    ui: &mut egui::Ui,
+    value: &mut u32,
+    range: std::ops::RangeInclusive<u32>,
+    suffix: &str,
+) -> egui::Response {
+    #[cfg(not(target_os = "android"))]
+    {
+        ui.add(egui::DragValue::new(value).range(range).suffix(suffix))
+    }
+    #[cfg(target_os = "android")]
+    {
+        let id = ui.next_auto_id().with("number_text");
+        let mut text = ui
+            .ctx()
+            .data(|data| data.get_temp::<String>(id))
+            .unwrap_or_else(|| value.to_string());
+        let response = text_field_kind(ui, &mut text, suffix.trim(), false, 88.0, true);
+        if let Ok(parsed) = text.parse::<u32>() {
+            *value = parsed.clamp(*range.start(), *range.end());
+        }
+        if response.has_focus() {
+            ui.ctx().data_mut(|data| data.insert_temp(id, text));
+        } else {
+            ui.ctx().data_mut(|data| data.remove::<String>(id));
+        }
+        response
+    }
 }

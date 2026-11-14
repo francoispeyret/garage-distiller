@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod ui;
+use garage_distiller::ui;
 
 fn main() -> eframe::Result {
     if std::env::args().any(|arg| arg == "--version") {

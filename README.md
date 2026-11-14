@@ -1,6 +1,6 @@
 # Garage Distiller
 
-Une application desktop native en **Rust**, pour macOS et Windows, qui découvre des annonces de voitures d’occasion directement sur les sites des garages. Choisissez une marque, un modèle et un budget maximum : la recherche des sites est automatique, sans liste de garages à constituer.
+Une application native en **Rust**, pour macOS, Windows et Android, qui découvre des annonces de voitures d’occasion directement sur les sites des garages. Choisissez une marque, un modèle et un budget maximum : la recherche des sites est automatique, sans liste de garages à constituer.
 
 L’interface sombre propose un tableau d’annonces, des recherches enregistrées, des favoris, un historique d’alertes et des notifications système. La découverte web et la collecte s’exécutent en arrière-plan pour garder l’interface réactive.
 
@@ -9,6 +9,12 @@ L’interface sombre propose un tableau d’annonces, des recherches enregistré
 ## Installer l’application
 
 Téléchargez l’archive correspondant à votre ordinateur dans les [versions GitHub](https://github.com/francoispeyret/garage-distiller/releases) : macOS Apple Silicon, macOS Intel ou Windows x64. Décompressez-la, puis ouvrez `Garage Distiller.app` ou `garage-distiller.exe`. Installez-la dans un dossier accessible en écriture pour les mises à jour. Les particularités de signature système sont décrites dans [le guide de distribution](docs/RELEASING.md#installation-et-signature-système).
+
+### Version Android
+
+Téléchargez directement [l’APK pour Android 8.0+ ARM64](https://github.com/francoispeyret/garage-distiller/releases/download/android-v0.1.1/garage-distiller-0.1.1-android-arm64.apk) depuis votre téléphone, ou consultez [la release Android](https://github.com/francoispeyret/garage-distiller/releases/tag/android-v0.1.1). L’interface est adaptée au tactile, avec des cartes d’annonces, le clavier Android et les notifications système. L’application conserve les données dans son stockage privé et surveille les recherches au premier plan uniquement.
+
+Consultez [le guide Android](docs/ANDROID.md) pour installer l’APK, le reconstruire et conserver sa clé de signature. Les mises à jour Android s’installent via un nouvel APK ; l’auto-mise à jour décrite plus bas concerne uniquement les versions ordinateur.
 
 ## Démarrer depuis les sources
 
@@ -74,8 +80,9 @@ Les recherches, sources, annonces, favoris, réglages et alertes sont enregistr�
 | --- | --- |
 | macOS | `~/Library/Application Support/fr.GarageDistiller.Garage-Distiller/state.json` |
 | Windows | `%LOCALAPPDATA%\GarageDistiller\Garage Distiller\data\state.json` |
+| Android | Stockage privé de l’application : `files/state.json` |
 
-Le bouton **Ouvrir le dossier de données** dans les réglages permet de retrouver ce fichier. Fermez l’application avant une restauration manuelle.
+Sur ordinateur, le bouton **Ouvrir le dossier de données** dans les réglages permet de retrouver ce fichier. Fermez l’application avant une restauration manuelle.
 
 Il n’y a pas de compte Garage Distiller ni de synchronisation cloud. Les termes de recherche sont envoyés au moteur choisi, les pages sont demandées directement aux garages et GitHub est contacté pour les mises à jour.
 

@@ -7,26 +7,39 @@ description = "Les annonces des garages, directement à la source."
 license = "MIT"
 repository = "https://github.com/francoispeyret/garage-distiller"
 
+[lib]
+crate-type = ["rlib", "cdylib"]
+
 [dependencies]
 anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
-directories = "6"
-eframe = { version = "0.33.3", default-features = false, features = ["default_fonts", "glow", "x11", "wayland", "accesskit"] }
 egui_extras = "0.33.3"
 image = { version = "0.25", default-features = false, features = ["png"] }
-notify-rust = "4"
-open = "5"
+webbrowser = "1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 robotstxt = "0.3"
 scraper = "0.24"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-self_update = { version = "=1.3.3", default-features = false, features = ["reqwest", "rustls", "github", "archive-zip", "compression-zip-deflate", "signatures", "checksums"] }
 semver = "1"
 sha2 = "0.10"
 tempfile = "3"
 url = "2"
 uuid = { version = "1", features = ["v4"] }
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+directories = "6"
+eframe = { version = "0.33.3", default-features = false, features = ["default_fonts", "glow", "x11", "wayland", "accesskit"] }
+notify-rust = "4"
+open = "5"
+self_update = { version = "=1.3.3", default-features = false, features = ["reqwest", "rustls", "github", "archive-zip", "compression-zip-deflate", "signatures", "checksums"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+eframe = { version = "0.33.3", default-features = false, features = ["default_fonts", "glow", "android-game-activity"] }
+android-activity = { version = "=0.6.1", features = ["game-activity"] }
+android_logger = "0.15"
+log = "0.4"
+jni = "0.21"
 
 [profile.release]
 opt-level = 3

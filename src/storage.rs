@@ -6,9 +6,14 @@ use std::{
 };
 
 pub fn data_path() -> Result<PathBuf> {
-    let dirs = directories::ProjectDirs::from("fr", "GarageDistiller", "Garage Distiller")
-        .context("Impossible de déterminer le dossier de données")?;
-    Ok(dirs.data_local_dir().join("state.json"))
+    #[cfg(target_os = "android")]
+    return crate::android::data_path();
+    #[cfg(not(target_os = "android"))]
+    {
+        let dirs = directories::ProjectDirs::from("fr", "GarageDistiller", "Garage Distiller")
+            .context("Impossible de déterminer le dossier de données")?;
+        Ok(dirs.data_local_dir().join("state.json"))
+    }
 }
 
 pub fn load(path: &Path) -> Result<State> {

@@ -51,6 +51,14 @@ gh workflow run release.yml --repo francoispeyret/garage-distiller --ref main --
 
 Cette reprise charge la définition actuelle du workflow, puis extrait et construit **le tag existant**. Le tag choisi doit correspondre à la version de son `Cargo.toml`, et la publication utilise ce même tag. Aucun tag n'est supprimé ni déplacé. C'est aussi la voie de reprise si le premier push simultané de `main` et du tag n'a déclenché que l'intégration continue.
 
+## Release Android dédiée
+
+La première release Android utilise le tag `android-v0.1.1` et le fichier `garage-distiller-0.1.1-android-arm64.apk`, accompagné de son SHA-256 et du compte rendu de validation. Le tag pointe sur les sources Android ; il ne déclenche pas le workflow de publication desktop.
+
+Construire avec `scripts/build_android.sh` et conserver le keystore local existant pour que les mises à jour Android gardent la même signature. Ne jamais publier le keystore. Voir [le guide Android](ANDROID.md) pour la signature et les prérequis.
+
+Publier les fichiers via une release brouillon, vérifier les pièces jointes puis la rendre publique avec `--latest=false` : la release desktop reste la référence du mécanisme de mise à jour des ordinateurs. Ne pas remplacer les APK déjà distribués ; augmenter la version pour les mises à jour suivantes.
+
 ## Installation et signature système
 
 - **macOS** : décompresser, déplacer `Garage Distiller.app` dans un dossier accessible en écriture (par exemple `~/Applications`), puis ouvrir l'application. Une mise à jour remplace le bundle entier, y compris ses ressources et sa signature. Le workflow produit une signature ad hoc, pas une signature Developer ID ni une notarisation Apple. Pour une distribution sans avertissement Gatekeeper, ajouter la signature Developer ID et la notarisation avant de signer l'archive de mise à jour. L'application ne contourne pas Gatekeeper ni la translocation macOS.
